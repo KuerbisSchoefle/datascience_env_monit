@@ -22,6 +22,50 @@ You hand in two things on ILIAS **before Block 5 (Friday 20 November, 8:30)**: t
 - About 2–3 GB of free disk space. If your laptop is short on space, work in your bwUniCluster workspace `envmon`.
 - Quarto for the report: Positron includes it. In VS Code, install Quarto from <https://quarto.org> and the Quarto extension. Python users may hand in a Jupyter notebook exported to HTML instead.
 
+## Part 0: Sync your fork with the course repository (10 min)
+
+Your fork is a copy of the course repository from the day you forked it in Block 2. New material, like this assignment, does not appear in your fork by itself, and `git pull` alone only talks to your fork. You have to bring the new commits over from the course repository first.
+
+### 0.1 Connect your clone to the course repository (once)
+
+In your project folder, add the course repository as a second remote called `upstream`:
+
+```bash
+git remote add upstream https://github.com/negin-katal/datascience_env_monit.git
+git remote -v
+```
+
+**Check:** `git remote -v` lists two remotes: `origin` (your fork, where you push) and `upstream` (the course repository, where new material comes from). You only do this step once.
+
+### 0.2 Bring in the new material (every time new material is announced)
+
+Commit or stash your own changes first, so `git status` says the working tree is clean. Then:
+
+```bash
+git status
+git pull upstream main
+git push
+```
+
+`git pull upstream main` downloads the new commits from the course repository and merges them into your branch. `git push` sends them on to your fork on GitHub.
+
+**Check:** the folder `assignments/` now contains `block-4-flux-data-summary.md`, and `git log --oneline` shows the new commits from the course repository.
+
+### 0.3 If Git reports a conflict
+
+You changed some files that the course repository also has (in Block 2 you replaced `README.md` with your own). If Git stops with `CONFLICT (content): Merge conflict in README.md`, keep your own version of that file:
+
+```bash
+git checkout --ours README.md
+git add README.md
+git commit -m "Merge course updates, keep my README"
+git push
+```
+
+For any other file with a conflict, open it, decide which lines to keep, delete the `<<<<<<<`, `=======` and `>>>>>>>` lines, then `git add` the file and commit, as in Block 2. Lost? `git merge --abort` takes you back to where you were before the pull.
+
+**Alternative on github.com:** on your fork's page, click **Sync fork → Update branch**, then run `git pull` on your laptop. If GitHub says the branch has conflicts, **do not click "Discard commits"**: that throws away your own commits. Use the command line above instead.
+
 ## Part A: Find your towers and download them (30 min)
 
 ### A1. Find your set
@@ -45,7 +89,13 @@ git commit -m "Keep downloaded flux data out of Git"
 
 ### A3. Download with the Shuttle
 
-Use the Shuttle script from ILIAS (it brings all dependencies). Under the hood it runs these three commands, which you can also type yourself:
+Download `get_my_towers.py` and `tower_sets_block4.csv` from ILIAS into your project folder and run, with your own student number:
+
+```bash
+python3 get_my_towers.py --student 07      # Windows: py get_my_towers.py --student 07
+```
+
+The script installs the Shuttle if needed, makes the snapshot, downloads your five zips into `data/raw`, checks them and writes `data/raw/CITATIONS.txt`. Under the hood it runs these commands, which you can also type yourself:
 
 ```bash
 pip install git+https://github.com/fluxnet/shuttle.git
@@ -204,6 +254,7 @@ Submit these two things on ILIAS before Block 5:
 
 Tick everything before you submit:
 
+- [ ] My fork is synced with the course repository (`git remote -v` shows `upstream`)
 - [ ] Five zips in `data/raw`, untouched; `data/` is in `.gitignore`
 - [ ] −9999 is read as missing and time stamps are parsed as dates
 - [ ] The report names the snapshot file and the file versions (for example `v1.3_r1`)
@@ -217,6 +268,9 @@ Tick everything before you submit:
 
 | You see | Usually it means |
 | --- | --- |
+| `error: remote upstream already exists` | You already added it. Skip 0.1 and go on with 0.2. |
+| `Your local changes would be overwritten by merge` | Commit (or `git stash`) your own changes first, then pull again. |
+| `fatal: refusing to merge unrelated histories` | Your clone is not from a fork of the course repository. Ask Negin. |
 | `fluxnet-shuttle: command not found` | The Shuttle is not installed in the active Python. Use the ILIAS script, or activate your virtual environment first. |
 | `Output directory does not exist` | Create the folder first (`mkdir -p data/raw`). The Shuttle does not create it. |
 | A download stops halfway | Network problem. Run the download again for that one site with `-s SITE`. Existing files are overwritten. |
