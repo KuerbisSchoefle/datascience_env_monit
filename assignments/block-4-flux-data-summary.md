@@ -76,16 +76,34 @@ Open `tower_sets_block4.csv` (ILIAS, folder DATA). Find your name and write down
 
 ### A2. Prepare the folders
 
-Data never go into Git. In your project folder:
+Data never go into Git. Create the data folders and add `data/` to your `.gitignore`, then commit the `.gitignore`.
+
+**R route** (R console in Positron; works on Windows, macOS and Linux):
+
+```r
+dir.create("data/raw", recursive = TRUE)
+dir.create("data/snapshots", recursive = TRUE)
+dir.create("data/processed", recursive = TRUE)
+cat("data/\n", file = ".gitignore", append = TRUE)
+```
+
+**Python route** (terminal on macOS or Linux):
 
 ```bash
 mkdir -p data/raw data/snapshots data/processed
 echo "data/" >> .gitignore
+```
+
+On Windows, use the R lines above in an R console, or create the three folders in the Explorer and add the line `data/` to `.gitignore` in your editor.
+
+Then, for everyone, in the terminal:
+
+```bash
 git add .gitignore
 git commit -m "Keep downloaded flux data out of Git"
 ```
 
-**Check:** `git status` does not list anything under `data/`.
+**Check:** `git status` does not list anything under `data/`. (The download scripts in A3 also create the folders if they are missing, but the `.gitignore` line is your job.)
 
 ### A3. Download with the Shuttle
 
@@ -94,6 +112,8 @@ Download `get_my_towers.py` and `tower_sets_block4.csv` from ILIAS into your pro
 ```bash
 python3 get_my_towers.py --student 07      # Windows: py get_my_towers.py --student 07
 ```
+
+**R route:** use `get_my_towers.R` instead. Open it in Positron, set `my_student <- "07"` at the top and press Run (or run `Rscript get_my_towers.R 07` in the terminal). It does exactly the same; it still needs Python 3.9 or newer on your computer, because the Shuttle is a Python tool.
 
 The script installs the Shuttle if needed, makes the snapshot, downloads your five zips into `data/raw`, checks them and writes `data/raw/CITATIONS.txt`. Under the hood it runs these commands, which you can also type yourself:
 
