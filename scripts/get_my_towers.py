@@ -4,7 +4,7 @@ get_my_towers.py — download your five FLUXNET towers with the FLUXNET Shuttle
 Environmental Monitoring and Data Analysis · Block 4 · University of Freiburg
 
 What it does
-  1. Installs the FLUXNET Shuttle into the Python you run this script with (if it is missing).
+  1. Installs the FLUXNET Shuttle into its own Python environment in data/.shuttle-env (once).
   2. Reads your five site IDs from tower_sets_block4.csv (ILIAS), or takes them from --sites.
   3. Makes a snapshot of all available FLUXNET data  -> data/snapshots/
   4. Downloads your five zip files                   -> data/raw/
@@ -15,12 +15,13 @@ How to run it (from your project folder, the one with scripts/ and data/)
   Windows:        py get_my_towers.py --student 07
   Own site list:  python3 get_my_towers.py --sites DE-Hai FR-Hes AU-How US-Kon CN-Dsh
 
-Needs: Python 3.9 or newer, Git (for installing the Shuttle), internet, ~2–3 GB of free disk space.
-Tip: use the virtual environment from Block 1 (.venv) so the Shuttle is installed there.
+Needs: Python 3.9 or newer (the Shuttle itself runs on 3.9-3.13; with only 3.14, uv provides 3.13), Git (for installing the Shuttle), internet, ~2–3 GB of free disk space.
+Works with any Python 3.9+ installation (python.org, uv, Homebrew, conda, Linux).
 """
 
 import argparse
 import csv
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -41,30 +42,86 @@ def stop(msg):
     sys.exit(1)
 
 
-def ensure_shuttle():
-    """Install the FLUXNET Shuttle into this Python if it is not there yet."""
-    if sys.version_info < (3, 9):
-        stop(f"Python 3.9 or newer is needed, you have {sys.version.split()[0]}.")
+ENV_DIR = Path("data/.shuttle-env")
+ENV_PY = ENV_DIR / ("Scripts/python.exe" if sys.platform.startswith("win") else "bin/python")
+
+
+def run_env(args, **kw):
+    return subprocess.run([str(ENV_PY.absolute()), *args], **kw).returncode
+
+
+def env_ok():
+    return ENV_PY.exists() and run_env(["-c", "import fluxnet_shuttle"],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+
+
+# The Shuttle (v0.3.x) does not run on Python 3.14 yet ("no current event loop"),
+# so its environment is built with Python 3.9-3.13.
+OK_VERSION = "import sys; print((3, 9) <= sys.version_info[:2] < (3, 14))"
+
+
+def version_ok(cmd):
     try:
-        import fluxnet_shuttle  # noqa: F401
-        say("FLUXNET Shuttle is already installed.")
+        out = subprocess.run([*cmd, "-c", OK_VERSION], capture_output=True, text=True, timeout=30)
+        return out.stdout.strip() == "True"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def base_python():
+    """A Python 3.9-3.13 on this computer, or None."""
+    cands = [[sys.executable]]
+    for name in ("python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3", "python"):
+        w = shutil.which(name)
+        if w:
+            cands.append([w])
+    if sys.platform.startswith("win") and shutil.which("py"):
+        cands += [["py", f"-3.{v}"] for v in (13, 12, 11, 10, 9)]
+    for c in cands:
+        if version_ok(c):
+            return c
+    return None
+
+
+def ensure_shuttle():
+    """Install the Shuttle into its own environment in data/.shuttle-env (data/ is in .gitignore).
+    This works with every Python, also with Pythons managed by uv, Homebrew or Linux,
+    which refuse direct package installs."""
+    Path("data").mkdir(exist_ok=True)
+    if ENV_PY.exists() and not version_ok([str(ENV_PY.absolute())]):
+        say(f"{ENV_DIR} uses a Python version the Shuttle cannot run on; rebuilding it ...")
+        shutil.rmtree(ENV_DIR)
+    if env_ok():
+        say(f"FLUXNET Shuttle is ready ({ENV_DIR}).")
         return
-    except ImportError:
-        pass
+    uv = shutil.which("uv")
+    if not ENV_PY.exists():
+        say(f"Creating a Python environment for the Shuttle in {ENV_DIR} (one time) ...")
+        base = base_python()
+        if base:
+            subprocess.run([*base, "-m", "venv", str(ENV_DIR)])
+        if not ENV_PY.exists() and uv:
+            say("Asking uv for Python 3.13 (it downloads it if needed) ...")
+            subprocess.run([uv, "venv", "--seed", "--python", "3.13", str(ENV_DIR)])
+        if not ENV_PY.exists():
+            stop("Could not create a Python environment for the Shuttle.\n"
+                 "  The Shuttle needs Python 3.9-3.13 (it does not work with 3.14 yet).\n"
+                 "  Install Python 3.13 from https://www.python.org, or install uv (https://docs.astral.sh/uv/),\n"
+                 "  then run the script again. Linux: you may need the venv module (sudo apt install python3-venv).")
     say("Installing the FLUXNET Shuttle (one time, takes a minute) ...")
-    cmd = [sys.executable, "-m", "pip", "install", SHUTTLE_SOURCE]
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
+    status = run_env(["-m", "pip", "install", "--quiet", SHUTTLE_SOURCE])
+    if status != 0 and uv:
+        status = subprocess.run([uv, "pip", "install", "--python", str(ENV_PY.absolute()), SHUTTLE_SOURCE]).returncode
+    if status != 0 or not env_ok():
         stop("Installing the Shuttle failed.\n"
              "  - Is Git installed? (git --version)\n"
-             "  - On a system Python you may need a virtual environment first:\n"
-             "      python3 -m venv .venv  then  source .venv/bin/activate  (Windows: .venv\\Scripts\\Activate.ps1)")
+             f"  - Delete the folder {ENV_DIR} and run the script again.")
+    say("FLUXNET Shuttle installed.")
 
 
 def shuttle(*args):
-    """Run a fluxnet-shuttle command with the same Python."""
-    cmd = [sys.executable, "-m", "fluxnet_shuttle.main", "--no-logfile", *args]
-    return subprocess.run(cmd).returncode
+    """Run a fluxnet-shuttle command with the Shuttle's own Python."""
+    return run_env(["-m", "fluxnet_shuttle.main", "--no-logfile", *args])
 
 
 def sites_for_student(csv_path, student):
