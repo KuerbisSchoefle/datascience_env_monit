@@ -11,6 +11,7 @@ Rscript scripts/cluster_hello.R 200
 scripts/ the analysis code 
 jobs/ Slurm job scripts 
 docs/ notes and templates
+reports/block4_data_summary.qmd
 
 ## Author
 Johanna
