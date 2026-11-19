@@ -20,9 +20,8 @@ library(dplyr)
 
 my_towers <- c("CR-AqC", "SE-Svb", "CN-You", "US-Bi2", "AU-Lit")
 
-tower_data <- read_csv("data/snapshots/fluxnet_shuttle_snapshot_20261113T112721.csv") %>%
+tower_data <- read_csv("../data/snapshots/fluxnet_shuttle_snapshot_20261113T112721.csv") %>%
   filter(site_id %in% my_towers)
-
 ```
 
 
@@ -115,38 +114,36 @@ ggplot() +
 ```{r}
 # create object hh_all that contains the data of all the towers (from exercise B)
 ### B3 Wrap it in a function -----------------------------------------
-read_hh <- function(zip_file) {
-  library(readr)
-  library(dplyr)
+library(here)
+library(readr)
+library(dplyr)
 
-  # define the columns that we want to use
+read_hh <- function(zip_file) {
+
   keep <- c("TIMESTAMP_START", "TIMESTAMP_END", "TA_F", "SW_IN_F", "VPD_F", "P_F",
             "NETRAD", "G_F_MDS", "H_F_MDS", "H_F_MDS_QC", "LE_F_MDS", "LE_F_MDS_QC",
             "NEE_VUT_REF", "NEE_VUT_REF_QC", "GPP_NT_VUT_REF", "RECO_NT_VUT_REF")
 
-  # ZIP-Dateinamen extrahieren (z. B. "prefix_US-Bi2.zip")
   file_name <- tools::file_path_sans_ext(basename(zip_file))
-  site_name <- strsplit(file_name, "_")[[1]][2]  # Zweiter Teil nach dem ersten "_"
+  site_name <- strsplit(file_name, "_")[[1]][2]
 
   hh_name <- grep("FLUXMET_HH", unzip(zip_file, list = TRUE)$Name, value = TRUE)
 
-  unzip(zip_file, files = hh_name, exdir = "data/raw/unzipped")
+  out_dir <- here("data", "raw", "unzipped")
+  unzip(zip_file, files = hh_name, exdir = out_dir)
 
-  # read in csv
-  hh_all <- read_csv(file.path("data/raw/unzipped", hh_name),
-                     na = "-9999",
-                     col_select = any_of(keep),
-                     col_types = cols(TIMESTAMP_START = "c", TIMESTAMP_END = "c", .default = "d")) |>
-    mutate(time = as.POSIXct(TIMESTAMP_START, format = "%Y%m%d%H%M", tz = "UTC")) %>%
-    mutate(site = site_name)  # site-Kürzel basierend auf dem ZIP-Dateinamen hinzufügen
-
-  return(hh_all)
+  read_csv(file.path(out_dir, hh_name),
+           na = "-9999",
+           col_select = any_of(keep),
+           col_types = cols(TIMESTAMP_START = "c", TIMESTAMP_END = "c", .default = "d")) |>
+    mutate(time = as.POSIXct(TIMESTAMP_START, format = "%Y%m%d%H%M", tz = "UTC"),
+           site = site_name)
 }
 
-	# Get all zip archives
-	zip_files <- list.files("data/raw", pattern = "\\.zip$", full.names = TRUE)
-	# Apply `read_hh` to each archive and combine the results
-	hh_all <- lapply(zip_files, read_hh) |> bind_rows()
+zip_files <- list.files(here("data", "raw"), pattern = "\\.zip$", full.names = TRUE)
+stopifnot(length(zip_files) > 0)   # bricht mit klarer Meldung ab, statt still ein leeres Objekt zu erzeugen
+
+hh_all <- lapply(zip_files, read_hh) |> bind_rows()
 
 ```
 
@@ -472,7 +469,7 @@ Unfortunately this doesn't work. I couldn't find the mistake. Because of this ti
 ```{r}
 # unit conversion from CO2 to C
 daily_means_US <- daily_means_US[,c(2:4)]*1.0378
-daily_means_CN <- daily_means_CN,c(2:4)]*1.0378
+daily_means_CN <- daily_means_CN[,c(2:4)]*1.0378
 daily_means_CR <- daily_means_CR[,c(2:4)]*1.0378
 daily_means_SE <- daily_means_SE[,c(2:4)]*1.0378
 daily_means_AU <- daily_means_AU[,c(2:4)]*1.0378
@@ -480,34 +477,102 @@ daily_means_AU <- daily_means_AU[,c(2:4)]*1.0378
 
 ```{r}
 #par(mfrow= c(5,1))
-# US
-plot(x = daily_means_US$date, y= daily_means_US$NEE, type = "l", col= "cornflowerblue", xlab= "Year", ylab= "flux", main= "United States", ylim= c(-10, 25))
-lines(x = daily_means_US$date, y=daily_means_US$GPP, col = "green")
-lines(x = daily_means_US$date, y=daily_means_US$RECO, col= "red")
-legend("topright", pch = c("-", "-", "-"),legend = c("NEE", "GPP", "RECO"), col= c("cornflowerblue", "green", "red"), bty ="n")
+library(dplyr)
+
+daily_means_US <- hh_all %>%
+  filter(site == "US-Bi2") %>%
+  mutate(date = as.Date(time)) %>%
+  group_by(date) %>%
+  summarise(
+    NEE  = mean(NEE_VUT_REF,     na.rm = TRUE),
+    GPP  = mean(GPP_NT_VUT_REF,  na.rm = TRUE),
+    RECO = mean(RECO_NT_VUT_REF, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+stopifnot(nrow(daily_means_US) > 0)
+
+plot(daily_means_US$date, daily_means_US$NEE, type = "l", col = "cornflowerblue",
+     xlab = "Year", ylab = "flux", main = "United States", ylim = c(-10, 25))
+lines(daily_means_US$date, daily_means_US$GPP,  col = "green")
+lines(daily_means_US$date, daily_means_US$RECO, col = "red")
+legend("topright", lty = 1, legend = c("NEE", "GPP", "RECO"),
+       col = c("cornflowerblue", "green", "red"), bty = "n")
 
 ```
 
 ```{r}
-# china
-plot(x = daily_means_CN$date, y= daily_means_CN$NEE, type = "l", col= "cornflowerblue", xlab= "Year", ylab= "flux", main= "China", ylim= c(-6, 6))
-lines(x = daily_means_CN$date, y=daily_means_CN$GPP, col = "green")
-lines(x = daily_means_CN$date, y=daily_means_CN$RECO, col= "red")
-legend("topright", pch = c("-", "-", "-"),legend = c("NEE", "GPP", "RECO"), col= c("cornflowerblue", "green", "red"), bty ="n")
+library(dplyr)
+
+daily_means_CN <- hh_all %>%
+  filter(site == "CN-You") %>%
+  mutate(date = as.Date(time)) %>%
+  group_by(date) %>%
+  summarise(
+    NEE  = mean(NEE_VUT_REF,     na.rm = TRUE),
+    GPP  = mean(GPP_NT_VUT_REF,  na.rm = TRUE),
+    RECO = mean(RECO_NT_VUT_REF, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+stopifnot(nrow(daily_means_CN) > 0)
+
+plot(daily_means_CN$date, daily_means_CN$NEE, type = "l", col = "cornflowerblue",
+     xlab = "Year", ylab = "flux", main = "China", ylim = c(-6, 6))
+lines(daily_means_CN$date, daily_means_CN$GPP,  col = "green")
+lines(daily_means_CN$date, daily_means_CN$RECO, col = "red")
+legend("topright", lty = 1, legend = c("NEE", "GPP", "RECO"),
+       col = c("cornflowerblue", "green", "red"), bty = "n")
 ```
 
 
 ```{r}
 # Costa Rica
-plot(x = daily_means_CR$date, y= daily_means_CR$NEE, type = "l", col= "cornflowerblue", xlab= "Year", ylab= "flux", main= "Costa Rica", , ylim= c(-10, 10))
-lines(x = daily_means_CR$date, y=daily_means_CR$GPP, col = "green")
-lines(x = daily_means_CR$date, y=daily_means_CR$RECO, col= "red")
-legend("topright", pch = c("-", "-", "-"),legend = c("NEE", "GPP", "RECO"), col= c("cornflowerblue", "green", "red"), bty ="n")
+library(dplyr)
+
+daily_means_CR <- hh_all %>%
+  filter(site == "CR-AqC") %>%
+  mutate(date = as.Date(time)) %>%
+  group_by(date) %>%
+  summarise(
+    NEE  = mean(NEE_VUT_REF,     na.rm = TRUE),
+    GPP  = mean(GPP_NT_VUT_REF,  na.rm = TRUE),
+    RECO = mean(RECO_NT_VUT_REF, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+stopifnot(nrow(daily_means_CR) > 0)
+
+plot(daily_means_CR$date, daily_means_CR$NEE, type = "l", col = "cornflowerblue",
+     xlab = "Year", ylab = "flux", main = "Costa Rica", ylim = c(-10, 10))
+lines(daily_means_CR$date, daily_means_CR$GPP,  col = "green")
+lines(daily_means_CR$date, daily_means_CR$RECO, col = "red")
+legend("topright", lty = 1, legend = c("NEE", "GPP", "RECO"),
+       col = c("cornflowerblue", "green", "red"), bty = "n")
 ```
 
+China and Costa Rica have no values for GPP and Reco!
 
 ```{r}
 # Sweden
+
+
+
+
+library(dplyr)
+
+daily_means_SE <- hh_all %>%
+  filter(site == "SE-Svb") %>%
+  mutate(date = as.Date(time)) %>%
+  group_by(date) %>%
+  summarise(
+    NEE  = mean(NEE_VUT_REF,     na.rm = TRUE),
+    GPP  = mean(GPP_NT_VUT_REF,  na.rm = TRUE),
+    RECO = mean(RECO_NT_VUT_REF, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+stopifnot(nrow(daily_means_SE) > 0)
 
 # filter data
 daily_means_SE$RECO[daily_means_SE$RECO == -9999] <- NA
@@ -517,20 +582,38 @@ daily_means_SE$NEE[daily_means_SE$NEE < -100] <- NA
 daily_means_SE$GPP[daily_means_SE$GPP == -9999] <- NA
 daily_means_SE$GPP[daily_means_SE$GPP < -100] <- NA
 
-
-plot(x = daily_means_SE$date, y= daily_means_SE$NEE, type = "l", col= "cornflowerblue", xlab= "Year", ylab= "flux", main= "Sweden", ylim= c(-10,15))
-lines(x = daily_means_SE$date, y=daily_means_SE$GPP, col = "green")
-lines(x = daily_means_SE$date, y=daily_means_SE$RECO, col= "red")
-legend("topright", pch = c("-", "-", "-"),legend = c("NEE", "GPP", "RECO"), col= c("cornflowerblue", "green", "red"), bty ="n")
+plot(daily_means_SE$date, daily_means_SE$NEE, type = "l", col = "cornflowerblue",
+     xlab = "Year", ylab = "flux", main = "Sweden", ylim = c(-10, 15))
+lines(daily_means_SE$date, daily_means_SE$GPP,  col = "green")
+lines(daily_means_SE$date, daily_means_SE$RECO, col = "red")
+legend("topright", lty = 1, legend = c("NEE", "GPP", "RECO"),
+       col = c("cornflowerblue", "green", "red"), bty = "n")
 ```
 
 
 ```{r}
 # Australia
-plot(x = daily_means_AU$date, y= daily_means_AU$NEE, type = "l", col= "cornflowerblue", xlab= "Year", ylab= "flux", main= "Australia", ylim= c(-10,25))
-lines(x = daily_means_AU$date, y=daily_means_AU$GPP, col = "green")
-lines(x = daily_means_AU$date, y=daily_means_AU$RECO, col= "red")
-legend("topright", pch = c("-", "-", "-"),legend = c("NEE", "GPP", "RECO"), col= c("cornflowerblue", "green", "red"), bty ="n")
+library(dplyr)
+
+daily_means_AU <- hh_all %>%
+  filter(site == "AU-Lit") %>%
+  mutate(date = as.Date(time)) %>%
+  group_by(date) %>%
+  summarise(
+    NEE  = mean(NEE_VUT_REF,     na.rm = TRUE),
+    GPP  = mean(GPP_NT_VUT_REF,  na.rm = TRUE),
+    RECO = mean(RECO_NT_VUT_REF, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+stopifnot(nrow(daily_means_AU) > 0)
+
+plot(daily_means_AU$date, daily_means_AU$NEE, type = "l", col = "cornflowerblue",
+     xlab = "Year", ylab = "flux", main = "Australia", ylim = c(-10, 25))
+lines(daily_means_AU$date, daily_means_AU$GPP,  col = "green")
+lines(daily_means_AU$date, daily_means_AU$RECO, col = "red")
+legend("topright", lty = 1, legend = c("NEE", "GPP", "RECO"),
+       col = c("cornflowerblue", "green", "red"), bty = "n")
 ```
 
 
