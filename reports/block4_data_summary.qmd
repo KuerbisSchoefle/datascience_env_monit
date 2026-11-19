@@ -10,3 +10,681 @@ execute:
   warning: false
 ---
 
+### C1. Site overview ----
+
+```{r}
+
+# read in data for my towers
+library(readr)
+library(dplyr)
+
+my_towers <- c("CR-AqC", "SE-Svb", "CN-You", "US-Bi2", "AU-Lit")
+
+tower_data <- read_csv("data/snapshots/fluxnet_shuttle_snapshot_20261113T112721.csv") %>%
+  filter(site_id %in% my_towers)
+
+```
+
+
+```{r}
+ # Lookup-table for site id and country
+country_lookup <- tibble(
+  site_id = c("CR-AqC", "SE-Svb", "CN-You", "US-Bi2", "AU-Lit"),
+  country = c("Costa Rica", "Sweden", "China", "United States", "Australia")
+)
+
+# add the country column
+tower_data_country <- tower_data %>%
+  left_join(country_lookup, by = "site_id")
+
+# correct order
+tower_data_overview <- tower_data_country %>%
+  select(
+    site_id,
+    site_name,
+    country,
+    igbp,
+    location_lat,
+    location_long,
+    first_year,
+    last_year,
+    data_hub,
+    product_citation
+  )
+
+# and display table
+print(tower_data_overview)
+
+```
+
+
+```{r}
+# create map with site locataioins
+library(ggplot2)
+library(dplyr)
+library(maps)
+
+
+# load world map
+world_map <- map_data("world")
+
+
+ggplot() +
+  # first the map in the background
+  geom_polygon(
+    data = world_map,
+    aes(x = long, y = lat, group = group),
+    fill = "lightgray",
+    color = "black"
+  ) +
+  # add the location points
+  geom_point(
+    data = tower_data_overview,
+    aes(x = location_long, y = location_lat, color = site_id),
+    size = 4,
+    alpha = 0.8
+  ) +
+  # add site name tags
+  geom_text(
+    data = tower_data_overview,
+    aes(x = location_long, y = location_lat, label = site_id),
+    vjust = -1,
+    size = 3.5,
+    color = "black"
+  ) +
+  # axes
+  labs(
+    title = "Locations of my FLUXNET-towers",
+    x = "Longitude",
+    y = "Latitude",
+    color = "Site ID"
+  ) +
+
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "bottom"
+  )
+
+```
+
+### C2. Data coverage -----
+
+
+```{r}
+# create object hh_all that contains the data of all the towers (from exercise B)
+### B3 Wrap it in a function -----------------------------------------
+read_hh <- function(zip_file) {
+  library(readr)
+  library(dplyr)
+
+  # define the columns that we want to use
+  keep <- c("TIMESTAMP_START", "TIMESTAMP_END", "TA_F", "SW_IN_F", "VPD_F", "P_F",
+            "NETRAD", "G_F_MDS", "H_F_MDS", "H_F_MDS_QC", "LE_F_MDS", "LE_F_MDS_QC",
+            "NEE_VUT_REF", "NEE_VUT_REF_QC", "GPP_NT_VUT_REF", "RECO_NT_VUT_REF")
+
+  # ZIP-Dateinamen extrahieren (z. B. "prefix_US-Bi2.zip")
+  file_name <- tools::file_path_sans_ext(basename(zip_file))
+  site_name <- strsplit(file_name, "_")[[1]][2]  # Zweiter Teil nach dem ersten "_"
+
+  hh_name <- grep("FLUXMET_HH", unzip(zip_file, list = TRUE)$Name, value = TRUE)
+
+  unzip(zip_file, files = hh_name, exdir = "data/raw/unzipped")
+
+  # read in csv
+  hh_all <- read_csv(file.path("data/raw/unzipped", hh_name),
+                     na = "-9999",
+                     col_select = any_of(keep),
+                     col_types = cols(TIMESTAMP_START = "c", TIMESTAMP_END = "c", .default = "d")) |>
+    mutate(time = as.POSIXct(TIMESTAMP_START, format = "%Y%m%d%H%M", tz = "UTC")) %>%
+    mutate(site = site_name)  # site-Kürzel basierend auf dem ZIP-Dateinamen hinzufügen
+
+  return(hh_all)
+}
+
+	# Get all zip archives
+	zip_files <- list.files("data/raw", pattern = "\\.zip$", full.names = TRUE)
+	# Apply `read_hh` to each archive and combine the results
+	hh_all <- lapply(zip_files, read_hh) |> bind_rows()
+
+```
+
+
+```{r}
+# 
+library(dplyr)
+library(ggplot2)
+library(lubridate)  # to get the year out of Postix
+library(tidyr)      # to change in not long format for the heat map
+
+# prepare data for visualisation
+hh_coverage <- hh_all %>%
+  # get the year
+  mutate(year = year(time)) %>%
+  # calculate proportion of NEE_VUT_REF_QC == 0 per site and year
+  group_by(site, year) %>%
+  summarise(
+    share_measured = mean(NEE_VUT_REF_QC == 0, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # fill up missing site+ year info with 0
+  complete(site, year, fill = list(share_measured = 0))
+
+# change format into not-long-format for the heat map
+hh_coverage_wide <- hh_coverage %>%
+  pivot_wider(
+    names_from = year,
+    values_from = share_measured
+  )
+
+```
+
+```{r}
+### Print the heat map
+ggplot(hh_coverage, aes(x = year, y = site, fill = share_measured)) +
+  # Heatmap-Zellen
+  geom_tile(color = "white") +
+  # Farbskala (von 0 bis 1)
+  scale_fill_gradient(
+    low = "white",
+    high = "darkgreen",
+    name = "proportion of measured NEE"
+  ) +
+  # Achsenbeschriftungen
+  labs(
+    title = "share of half hours in which NEE was measured",
+    x = "Year",
+    y = "Site"
+  ) +
+  # Design anpassen
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank()
+  )
+```
+
+The best data cover has the Australian site AU-Lit in 2015.
+
+
+### C3. Summary statistics ------
+
+
+
+```{r}
+# data subset site for US
+filtered_US <- hh_all[hh_all$site == "US-Bi2", ]
+
+# Function to calculate statistics
+calculate_stats <- function(data, variable) {
+ 
+  mean_val <- mean(data[[variable]], na.rm = TRUE)
+  min_val <- min(data[[variable]], na.rm = TRUE)
+  max_val <- max(data[[variable]], na.rm = TRUE)
+  missing_pct <- mean(is.na(data[[variable]])) * 100
+
+  data.frame(
+    Variable = variable,
+    Mean = mean_val,
+    Minimum = min_val,
+    Maximum = max_val,
+    `Missing values (%)` = missing_pct
+  )
+}
+
+# vector with columns to calculate statistics
+variables <- c("TA_F", "SW_IN_F", "VPD_F", "P_F", "NEE_VUT_REF", "GPP_NT_VUT_REF", "RECO_NT_VUT_REF", "H_F_MDS", "LE_F_MDS")
+
+# catlucate statistics and store in a list
+stats_list_US <- lapply(variables, function(var) calculate_stats(filtered_US, var))
+
+# create one data frame
+stats_df_US <- do.call(rbind, stats_list_US)
+
+# transpone table
+stats_df_transposed_US <- t(stats_df_US[, -1])  # delete 'variables'
+stats_df_transposed_US <- as.data.frame(stats_df_transposed_US)
+colnames(stats_df_transposed_US) <- stats_df_US$Variable  
+rownames(stats_df_transposed_US) <- c("Mean", "Minimum", "Maximum", "Missing values (%)") 
+
+
+new_colnames <- c(
+  "Air temperature(°C)",
+  "solar radiation (W/m²)",
+  "VPD (kPa)",
+  "Precipiatation (mm)",
+  "NEE (µmol CO₂/m²/s)",
+  "GPP (µmol CO₂/m²/s)",
+  "RECO (µmol CO₂/m²/s)",
+  "Sensible heat flux (W/m²)",
+  "Latent heat flux  (W/m²)"
+)
+
+colnames(stats_df_transposed_US) <- new_colnames
+
+```
+
+```{r}
+# data subset site for the other sites
+filtered_CN <- hh_all[hh_all$site == "CN-You", ]
+filtered_CR <- hh_all[hh_all$site == "CR-AqC", ]
+filtered_SE <- hh_all[hh_all$site == "SE-Svb", ]
+filtered_AU <- hh_all[hh_all$site == "AU-Lit", ]
+
+
+
+# catlucate statistics and store in a list
+stats_list_CN <- lapply(variables, function(var) calculate_stats(filtered_CN, var))
+stats_list_CR <- lapply(variables, function(var) calculate_stats(filtered_CR, var))
+stats_list_SE <- lapply(variables, function(var) calculate_stats(filtered_SE, var))
+stats_list_AU <- lapply(variables, function(var) calculate_stats(filtered_AU, var))
+
+# create one data frame
+stats_df_CN <- do.call(rbind, stats_list_CN)
+stats_df_CR <- do.call(rbind, stats_list_CR)
+stats_df_SE <- do.call(rbind, stats_list_SE)
+stats_df_AU <- do.call(rbind, stats_list_AU)
+
+# transpone table
+stats_df_transposed_CN <- t(stats_df_CN[, -1])  # delete 'variables'
+stats_df_transposed_CN <- as.data.frame(stats_df_transposed_CN)
+colnames(stats_df_transposed_CN) <- stats_df_CN$Variable  
+rownames(stats_df_transposed_CN) <- c("Mean", "Minimum", "Maximum", "Missing values (%)") 
+
+stats_df_transposed_CR <- t(stats_df_CR[, -1])  # delete 'variables'
+stats_df_transposed_CR <- as.data.frame(stats_df_transposed_CR)
+colnames(stats_df_transposed_CR) <- stats_df_CR$Variable  
+rownames(stats_df_transposed_CR) <- c("Mean", "Minimum", "Maximum", "Missing values (%)") 
+
+stats_df_transposed_SE <- t(stats_df_SE[, -1])  # delete 'variables'
+stats_df_transposed_SE <- as.data.frame(stats_df_transposed_SE)
+colnames(stats_df_transposed_SE) <- stats_df_SE$Variable  
+rownames(stats_df_transposed_SE) <- c("Mean", "Minimum", "Maximum", "Missing values (%)") 
+
+stats_df_transposed_AU <- t(stats_df_AU[, -1])  # delete 'variables'
+stats_df_transposed_AU <- as.data.frame(stats_df_transposed_AU)
+colnames(stats_df_transposed_AU) <- stats_df_AU$Variable  
+rownames(stats_df_transposed_AU) <- c("Mean", "Minimum", "Maximum", "Missing values (%)") 
+
+colnames(stats_df_transposed_CN) <- new_colnames
+colnames(stats_df_transposed_CR) <- new_colnames
+colnames(stats_df_transposed_SE) <- new_colnames
+colnames(stats_df_transposed_AU) <- new_colnames
+
+```
+
+
+US site statistics
+
+```{r}
+# US site statistics
+print(stats_df_transposed_US)
+```
+China site statistics
+
+```{r}
+print(stats_df_transposed_CN)
+```
+
+Costa Rica site statistics
+
+```{r}
+print(stats_df_transposed_CR)
+```
+
+Sweden site statistics
+
+```{r}
+print(stats_df_transposed_SE)
+```
+
+Australia site statistics
+
+```{r}
+print(stats_df_transposed_AU)
+```
+
+### C4. Time series -----
+
+```{r}
+# attach a date group
+filtered_US$date <- as.Date(filtered_US$time)
+filtered_CN$date <- as.Date(filtered_CN$time)
+filtered_CR$date <- as.Date(filtered_CR$time)
+filtered_SE$date <- as.Date(filtered_SE$time)
+filtered_AU$date <- as.Date(filtered_AU$time)
+
+# aggregate daily means
+daily_means_US <- filtered_US %>%
+  group_by(date) %>%  # Nach Datum gruppieren
+  summarise(
+    NEE = mean(NEE_VUT_REF, na.rm = TRUE),
+    GPP = mean(GPP_NT_VUT_REF, na.rm = TRUE),
+    RECO = mean(RECO_NT_VUT_REF, na.rm = TRUE)
+  )
+
+daily_means_CN <- filtered_CN %>%
+  group_by(date) %>%  # Nach Datum gruppieren
+  summarise(
+    NEE = mean(NEE_VUT_REF, na.rm = TRUE),
+    GPP = mean(GPP_NT_VUT_REF, na.rm = TRUE),
+    RECO = mean(RECO_NT_VUT_REF, na.rm = TRUE)
+  )
+
+daily_means_CR <- filtered_CR %>%
+  group_by(date) %>%  # Nach Datum gruppieren
+  summarise(
+    NEE = mean(NEE_VUT_REF, na.rm = TRUE),
+    GPP = mean(GPP_NT_VUT_REF, na.rm = TRUE),
+    RECO = mean(RECO_NT_VUT_REF, na.rm = TRUE)
+  )
+
+daily_means_SE <- filtered_SE %>%
+  group_by(date) %>%  # Nach Datum gruppieren
+  summarise(
+    NEE = mean(NEE_VUT_REF, na.rm = TRUE),
+    GPP = mean(GPP_NT_VUT_REF, na.rm = TRUE),
+    RECO = mean(RECO_NT_VUT_REF, na.rm = TRUE)
+  )
+
+daily_means_AU <- filtered_AU %>%
+  group_by(date) %>%  # Nach Datum gruppieren
+  summarise(
+    NEE = mean(NEE_VUT_REF, na.rm = TRUE),
+    GPP = mean(GPP_NT_VUT_REF, na.rm = TRUE),
+    RECO = mean(RECO_NT_VUT_REF, na.rm = TRUE)
+  )
+
+
+```
+
+
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+library(tidyr)
+
+all_data <- list(
+  US = daily_means_US,
+  CN = daily_means_CN,
+  CR = daily_means_CR,
+  SE = daily_means_SE,
+  AU = daily_means_AU
+)
+
+# 2. Farben für die Variablen festlegen
+colors <- c("GPP" = "green", "NEE" = "blue", "RECO" = "red")
+
+# 3. Einzelne Plots für jedes Land erstellen (ohne Funktion)
+plot_US <- ggplot(all_data$US, aes(x = date)) +
+  geom_line(aes(y = GPP, color = "GPP"), linewidth = 0.7, na.rm = TRUE) +
+  geom_line(aes(y = NEE, color = "NEE"), linewidth = 0.7, na.rm = TRUE) +
+  geom_line(aes(y = RECO, color = "RECO"), linewidth = 0.7, na.rm = TRUE) +
+  scale_color_manual(values = colors) +
+  labs(title = "USA", x = "Date", y = "flux") +
+  theme_minimal() +
+  theme(legend.position = "top", plot.title = element_text(hjust = 0.5))
+
+plot_CN <- ggplot(all_data$CN, aes(x = date)) +
+  geom_line(aes(y = GPP, color = "GPP"), linewidth = 0.7, na.rm = TRUE) +
+  geom_line(aes(y = NEE, color = "NEE"), linewidth = 0.7, na.rm = TRUE) +
+  geom_line(aes(y = RECO, color = "RECO"), linewidth = 0.7, na.rm = TRUE) +
+  scale_color_manual(values = colors) +
+  labs(title = "China", x = "Date", y = "flux") +
+  theme_minimal() +
+  theme(legend.position = "top", plot.title = element_text(hjust = 0.5))
+
+plot_CR <- ggplot(all_data$CR, aes(x = date)) +
+  geom_line(aes(y = GPP, color = "GPP"), linewidth = 0.7, na.rm = TRUE) +
+  geom_line(aes(y = NEE, color = "NEE"), linewidth = 0.7, na.rm = TRUE) +
+  geom_line(aes(y = RECO, color = "RECO"), linewidth = 0.7, na.rm = TRUE) +
+  scale_color_manual(values = colors) +
+  labs(title = "Costa Rica", x = "Date", y = "flux") +
+  theme_minimal() +
+  theme(legend.position = "top", plot.title = element_text(hjust = 0.5))
+
+plot_SE <- ggplot(all_data$SE, aes(x = date)) +
+  geom_line(aes(y = GPP, color = "GPP"), linewidth = 0.7, na.rm = TRUE) +
+  geom_line(aes(y = NEE, color = "NEE"), linewidth = 0.7, na.rm = TRUE) +
+  geom_line(aes(y = RECO, color = "RECO"), linewidth = 0.7, na.rm = TRUE) +
+  scale_color_manual(values = colors) +
+  labs(title = "Sweden", x = "Date", y = "flux") +
+  theme_minimal() +
+  theme(legend.position = "top", plot.title = element_text(hjust = 0.5))
+
+plot_AU <- ggplot(all_data$AU, aes(x = date)) +
+  geom_line(aes(y = GPP, color = "GPP"), linewidth = 0.7, na.rm = TRUE) +
+  geom_line(aes(y = NEE, color = "NEE"), linewidth = 0.7, na.rm = TRUE) +
+  geom_line(aes(y = RECO, color = "RECO"), linewidth = 0.7, na.rm = TRUE) +
+  scale_color_manual(values = colors) +
+  labs(title = "Australia", x = "Date", y = "flux") +
+  theme_minimal() +
+  theme(legend.position = "top", plot.title = element_text(hjust = 0.5))
+
+# 4. Alle Plots in einer Abbildung anordnen (5 Zeilen, 1 Spalte)
+grid.arrange(plot_US, plot_CN, plot_CR, plot_SE, plot_AU, ncol = 1, top = "Time series GPP, NEE and RECO")
+```
+
+Unfortunately this doesn't work. I couldn't find the mistake. Because of this time seres are plotted separately below.
+
+```{r}
+# unit conversion from CO2 to C
+daily_means_US <- daily_means_US[,c(2:4)]*1.0378
+daily_means_CN <- daily_means_CN,c(2:4)]*1.0378
+daily_means_CR <- daily_means_CR[,c(2:4)]*1.0378
+daily_means_SE <- daily_means_SE[,c(2:4)]*1.0378
+daily_means_AU <- daily_means_AU[,c(2:4)]*1.0378
+```
+
+```{r}
+#par(mfrow= c(5,1))
+# US
+plot(x = daily_means_US$date, y= daily_means_US$NEE, type = "l", col= "cornflowerblue", xlab= "Year", ylab= "flux", main= "United States", ylim= c(-10, 25))
+lines(x = daily_means_US$date, y=daily_means_US$GPP, col = "green")
+lines(x = daily_means_US$date, y=daily_means_US$RECO, col= "red")
+legend("topright", pch = c("-", "-", "-"),legend = c("NEE", "GPP", "RECO"), col= c("cornflowerblue", "green", "red"), bty ="n")
+
+```
+
+```{r}
+# china
+plot(x = daily_means_CN$date, y= daily_means_CN$NEE, type = "l", col= "cornflowerblue", xlab= "Year", ylab= "flux", main= "China", ylim= c(-6, 6))
+lines(x = daily_means_CN$date, y=daily_means_CN$GPP, col = "green")
+lines(x = daily_means_CN$date, y=daily_means_CN$RECO, col= "red")
+legend("topright", pch = c("-", "-", "-"),legend = c("NEE", "GPP", "RECO"), col= c("cornflowerblue", "green", "red"), bty ="n")
+```
+
+
+```{r}
+# Costa Rica
+plot(x = daily_means_CR$date, y= daily_means_CR$NEE, type = "l", col= "cornflowerblue", xlab= "Year", ylab= "flux", main= "Costa Rica", , ylim= c(-10, 10))
+lines(x = daily_means_CR$date, y=daily_means_CR$GPP, col = "green")
+lines(x = daily_means_CR$date, y=daily_means_CR$RECO, col= "red")
+legend("topright", pch = c("-", "-", "-"),legend = c("NEE", "GPP", "RECO"), col= c("cornflowerblue", "green", "red"), bty ="n")
+```
+
+
+```{r}
+# Sweden
+
+# filter data
+daily_means_SE$RECO[daily_means_SE$RECO == -9999] <- NA
+daily_means_SE$RECO[daily_means_SE$RECO < -100] <- NA
+daily_means_SE$NEE[daily_means_SE$NEE == -9999] <- NA
+daily_means_SE$NEE[daily_means_SE$NEE < -100] <- NA
+daily_means_SE$GPP[daily_means_SE$GPP == -9999] <- NA
+daily_means_SE$GPP[daily_means_SE$GPP < -100] <- NA
+
+
+plot(x = daily_means_SE$date, y= daily_means_SE$NEE, type = "l", col= "cornflowerblue", xlab= "Year", ylab= "flux", main= "Sweden", ylim= c(-10,15))
+lines(x = daily_means_SE$date, y=daily_means_SE$GPP, col = "green")
+lines(x = daily_means_SE$date, y=daily_means_SE$RECO, col= "red")
+legend("topright", pch = c("-", "-", "-"),legend = c("NEE", "GPP", "RECO"), col= c("cornflowerblue", "green", "red"), bty ="n")
+```
+
+
+```{r}
+# Australia
+plot(x = daily_means_AU$date, y= daily_means_AU$NEE, type = "l", col= "cornflowerblue", xlab= "Year", ylab= "flux", main= "Australia", ylim= c(-10,25))
+lines(x = daily_means_AU$date, y=daily_means_AU$GPP, col = "green")
+lines(x = daily_means_AU$date, y=daily_means_AU$RECO, col= "red")
+legend("topright", pch = c("-", "-", "-"),legend = c("NEE", "GPP", "RECO"), col= c("cornflowerblue", "green", "red"), bty ="n")
+```
+
+
+### C5. Diurnal cycles -----
+
+```{r}
+library(dplyr)
+library(lubridate)
+library(tidyr)
+library(ggplot2)
+
+flux <- hh_all
+meta <- tower_data
+
+
+```
+
+```{r}
+# apparently there are still -9999 values uinstead of NAs in the object. I don#t know how, they shouldn#t be there as they were redefined when the data was read in. But somehow I still need to do this but only for Sweden.
+flux$NEE_VUT_REF[flux$NEE_VUT_REF == -9999] <- NA
+flux$LE_F_MDS[flux$LE_F_MDS == -9999] <- NA
+```
+
+
+```{r}
+flux <- flux %>%
+  left_join(meta %>% select(site_id, location_lat), by = c("site" = "site_id")) %>%
+  mutate(
+    month = month(time),
+    # define months for season
+    season_north = case_when(
+      month %in% c(12, 1, 2)  ~ "Winter",
+      month %in% c(3, 4, 5)   ~ "Spring",
+      month %in% c(6, 7, 8)   ~ "Summer",
+      month %in% c(9, 10, 11) ~ "Autumn"
+    ),
+    # Southern hemisphere (lat < 0): season changed by six months
+    season = case_when(
+      location_lat >= 0 ~ season_north,
+      season_north == "Winter" ~ "Summer",
+      season_north == "Summer" ~ "Winter",
+      season_north == "Spring" ~ "Autumn",
+      season_north == "Autumn" ~ "Spring"
+    ),
+    season = factor(season, levels = c("Spring", "Summer", "Autumn", "Winter"))
+  )
+```
+
+The seasons are defined by month, not by a calender date. The latitude data is attached to define whether site are located on the northern or southern hemisphere. If situated on the southern hemisphere, seasons are reversed. 
+
+```{r}
+# calculate mean diurnal fluc
+diurnal <- flux %>%
+  mutate(hour = hour(time) + minute(time) / 60) %>%   # half-hours
+  group_by(site, season, hour) %>%
+  summarise(
+    NEE = mean(NEE_VUT_REF, na.rm = TRUE),
+    LE  = mean(LE_F_MDS,  na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(cols = c(NEE, LE), names_to = "variable", values_to = "value")
+```
+
+
+```{r}
+ggplot(diurnal, aes(x = hour, y = value, color = site)) +
+  geom_line(linewidth = 0.8) +
+  facet_grid(variable ~ season, scales = "free_y") +
+  scale_x_continuous(breaks = seq(0, 24, 6)) +
+  labs(
+    x = "Hour of day",
+    y = NULL,
+    color = "Site",
+    title = "Mean diurnal cycle of NEE and LE by season",
+  ) +
+  theme_bw()
+```
+
+### C6. Energy balance
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+
+flux <- flux %>%
+  mutate(across(where(is.numeric), ~ na_if(., -9999)))
+
+# find tower with netrad and g
+flux %>%
+  group_by(site) %>%
+  summarise(
+    n_netrad = sum(!is.na(NETRAD)),
+    n_G      = sum(!is.na(G_F_MDS)),
+    n_both   = sum(!is.na(NETRAD) & !is.na(G_F_MDS))
+  )
+```
+
+
+
+```{r}
+site_sel <- "SE-Svb"   # Sweden
+
+eb <- flux %>%
+  filter(site == site_sel,
+         H_F_MDS_QC  == 0,
+         LE_F_MDS_QC == 0) %>%
+  mutate(
+    turb  = H_F_MDS + LE_F_MDS,   # turbulent fluxes (y-axis)
+    avail = NETRAD - G_F_MDS      # available energy (x-axis)
+  ) %>%
+  filter(!is.na(turb), !is.na(avail))
+```
+
+
+```{r}
+# fit a linear regression
+fit <- lm(turb ~ avail, data = eb)
+
+slope     <- coef(fit)[["avail"]]
+intercept <- coef(fit)[["(Intercept)"]]
+r2        <- summary(fit)$r.squared
+
+slope; intercept; r2
+```
+
+```{r}
+# Plotting
+lims <- range(c(eb$avail, eb$turb), na.rm = TRUE)
+
+ggplot(eb, aes(x = avail, y = turb)) +
+  geom_point(alpha = 0.15, size = 0.8) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey30") +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 0.9) +
+  annotate("text",
+           x = lims[1], y = lims[2], hjust = -0.1, vjust = 1.5,
+           label = sprintf("Slope = %.2f\nR² = %.2f", slope, r2)) +
+  coord_fixed(xlim = lims, ylim = lims) +
+  labs(
+    x = expression(R[n] - G~"(W m"^-2*")"),
+    y = expression(H + LE~"(W m"^-2*")"),
+    title = paste("Energy balance closure:", site_sel)
+  ) +
+  theme_bw() +
+  theme(aspect.ratio = 1)
+```
+
+Generally the ecosystem in Costa Rica seems to take up the most carbon when we look at the whole year. The carbon and laten heat fluxes also are the most constant at this tower, which is not surprising as it is a tropical forest there. However, midday carbon fixation rates are very high ( higher than Costa Rica) at the cropland in the United States. This is also the site taht shows the highest variabilty through the seasons. This, however, is also not surprising as crops grow fast but then get harvested. Surprising was the high latent heat flux in the Australian savannah in Autumn. The data from the swedish tower data was annoying to handle as the exchange of the -9999 with the NAs didn't work and I couldn't find the problem for a long time. The data covoreage however, is not too good, especially for the tower in Costa Rica. this tower doensn't have data anymore for the last ten years.
+
+### Data and citation
+
+FLUXNET data products (ONEFlux v1.3, 2026 release), downloaded with the FLUXNET Shuttle from AmeriFlux, the ICOS Carbon Portal and TERN. Licence: CC-BY-4.0. 
+
+Pastorello et al. (2020), Scientific Data 7, 225, https://doi.org/10.1038/s41597-020-0534-3
+
+FLUXNET data products were produced and harmonized by eddy covariance regional networks and data processing centers, including AmeriFlux, ChinaFlux, European Fluxes Database, ICOS, JapanFlux, KoFlux, OzFlux, SAEON, and TERN. These products also include a modified version of ERA5 hourly data provided by the Copernicus Climate Change Service.
