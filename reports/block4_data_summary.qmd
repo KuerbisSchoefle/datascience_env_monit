@@ -1,7 +1,7 @@
 ---
 title: "Data summary of my five flux towers"
-author: "Your Name"
-date: today
+author: "Johanna Schmidle"
+date: 19.11.2026
 format:
   html:
     toc: true
