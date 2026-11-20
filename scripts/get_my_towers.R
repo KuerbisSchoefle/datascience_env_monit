@@ -16,7 +16,7 @@
 #   In Positron: set my_student below, then press Run (or source the file).
 #   In a terminal: Rscript get_my_towers.R 07
 #
-# Needs: Python 3.9 or newer (the Shuttle itself runs on 3.9-3.13; with only 3.14, uv provides 3.13), Git (to install the Shuttle), internet, ~2-3 GB free disk space.
+# Needs: Python 3.9 or newer (3.14 works too), Git (to install the Shuttle), internet, ~2-3 GB free disk space.
 
 # ---- 1. Your settings -------------------------------------------------------
 my_student   <- "26"       # your student number from tower_sets_block4.csv
@@ -60,9 +60,10 @@ if (is.null(my_sites)) {
 env_dir <- file.path("data", ".shuttle-env")
 env_py  <- if (.Platform$OS.type == "windows") file.path(env_dir, "Scripts", "python.exe") else file.path(env_dir, "bin", "python")
 
-# The Shuttle (v0.3.x) does not run on Python 3.14 yet ("no current event loop"),
-# so its environment is built with Python 3.9-3.13.
-ok_version <- shQuote("import sys; print((3, 9) <= sys.version_info[:2] < (3, 14))")
+# Any Python 3.9 or newer works. On 3.14 the Shuttle needs an event loop set up
+# before it starts ("no current event loop"); run_shuttle below does that.
+ok_version <- shQuote("import sys; print(sys.version_info[:2] >= (3, 9))")
+run_shuttle <- shQuote("import asyncio,sys; asyncio.set_event_loop(asyncio.new_event_loop()); from fluxnet_shuttle.main import main; sys.exit(main())")
 version_ok <- function(cmd, pre = character()) {
   out <- tryCatch(suppressWarnings(system2(cmd, c(pre, "-c", ok_version), stdout = TRUE, stderr = FALSE)),
                   error = function(e) character())
@@ -70,14 +71,14 @@ version_ok <- function(cmd, pre = character()) {
 }
 
 find_python <- function() {
-  # A Python 3.9-3.13 on this computer, or NULL
+  # A Python 3.9 or newer on this computer, or NULL
   cands <- list()
-  for (p in c("python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3", "python")) {
+  for (p in c("python3", "python")) {
     w <- Sys.which(p)
     if (nzchar(w)) cands[[length(cands) + 1]] <- list(cmd = unname(w), pre = character())
   }
   if (.Platform$OS.type == "windows" && nzchar(Sys.which("py"))) {
-    for (v in 13:9) cands[[length(cands) + 1]] <- list(cmd = unname(Sys.which("py")), pre = paste0("-3.", v))
+    cands[[length(cands) + 1]] <- list(cmd = unname(Sys.which("py")), pre = "-3")
   }
   for (c in cands) if (version_ok(c$cmd, c$pre)) return(c)
   NULL
@@ -107,8 +108,8 @@ if (env_ok()) {
     }
     if (!file.exists(env_py)) {
       halt("Could not create a Python environment for the Shuttle.\n",
-           "  The Shuttle needs Python 3.9-3.13 (it does not work with 3.14 yet).\n",
-           "  Install Python 3.13 from https://www.python.org (Windows: tick 'Add python.exe to PATH')\n",
+           "  The Shuttle needs Python 3.9 or newer.\n",
+           "  Install Python from https://www.python.org (Windows: tick 'Add python.exe to PATH')\n",
            "  or install uv (https://docs.astral.sh/uv/), restart Positron and run the script again.\n",
            "  Linux: you may also need the venv module (sudo apt install python3-venv).")
     }
@@ -125,7 +126,7 @@ if (env_ok()) {
   }
   say("FLUXNET Shuttle installed.")
 }
-shuttle <- function(...) run_env(c("-m", "fluxnet_shuttle.main", "--no-logfile", ...))
+shuttle <- function(...) run_env(c("-c", run_shuttle, "--no-logfile", ...))
 
 # ---- 4. Snapshot -----------------------------------------------------------
 dir.create(snap_dir, recursive = TRUE, showWarnings = FALSE)
