@@ -15,7 +15,7 @@ How to run it (from your project folder, the one with scripts/ and data/)
   Windows:        py get_my_towers.py --student 07
   Own site list:  python3 get_my_towers.py --sites DE-Hai FR-Hes AU-How US-Kon CN-Dsh
 
-Needs: Python 3.9 or newer (the Shuttle itself runs on 3.9-3.13; with only 3.14, uv provides 3.13), Git (for installing the Shuttle), internet, ~2–3 GB of free disk space.
+Needs: Python 3.9 or newer (3.14 works too), Git (for installing the Shuttle), internet, ~2–3 GB of free disk space.
 Works with any Python 3.9+ installation (python.org, uv, Homebrew, conda, Linux).
 """
 
@@ -55,9 +55,10 @@ def env_ok():
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
 
 
-# The Shuttle (v0.3.x) does not run on Python 3.14 yet ("no current event loop"),
-# so its environment is built with Python 3.9-3.13.
-OK_VERSION = "import sys; print((3, 9) <= sys.version_info[:2] < (3, 14))"
+# Any Python 3.9 or newer works. On 3.14 the Shuttle needs an event loop set up
+# before it starts ("no current event loop"); RUN_SHUTTLE below does that.
+OK_VERSION = "import sys; print(sys.version_info[:2] >= (3, 9))"
+RUN_SHUTTLE = "import asyncio,sys; asyncio.set_event_loop(asyncio.new_event_loop()); from fluxnet_shuttle.main import main; sys.exit(main())"
 
 
 def version_ok(cmd):
@@ -69,14 +70,14 @@ def version_ok(cmd):
 
 
 def base_python():
-    """A Python 3.9-3.13 on this computer, or None."""
+    """A Python 3.9 or newer on this computer, or None."""
     cands = [[sys.executable]]
-    for name in ("python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3", "python"):
+    for name in ("python3", "python"):
         w = shutil.which(name)
         if w:
             cands.append([w])
     if sys.platform.startswith("win") and shutil.which("py"):
-        cands += [["py", f"-3.{v}"] for v in (13, 12, 11, 10, 9)]
+        cands.append(["py", "-3"])
     for c in cands:
         if version_ok(c):
             return c
@@ -105,8 +106,8 @@ def ensure_shuttle():
             subprocess.run([uv, "venv", "--seed", "--python", "3.13", str(ENV_DIR)])
         if not ENV_PY.exists():
             stop("Could not create a Python environment for the Shuttle.\n"
-                 "  The Shuttle needs Python 3.9-3.13 (it does not work with 3.14 yet).\n"
-                 "  Install Python 3.13 from https://www.python.org, or install uv (https://docs.astral.sh/uv/),\n"
+                 "  The Shuttle needs Python 3.9 or newer.\n"
+                 "  Install Python from https://www.python.org, or install uv (https://docs.astral.sh/uv/),\n"
                  "  then run the script again. Linux: you may need the venv module (sudo apt install python3-venv).")
     say("Installing the FLUXNET Shuttle (one time, takes a minute) ...")
     status = run_env(["-m", "pip", "install", "--quiet", SHUTTLE_SOURCE])
@@ -121,7 +122,7 @@ def ensure_shuttle():
 
 def shuttle(*args):
     """Run a fluxnet-shuttle command with the Shuttle's own Python."""
-    return run_env(["-m", "fluxnet_shuttle.main", "--no-logfile", *args])
+    return run_env(["-c", RUN_SHUTTLE, "--no-logfile", *args])
 
 
 def sites_for_student(csv_path, student):
